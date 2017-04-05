@@ -334,9 +334,6 @@ int main(int argc, char **argv) {
     print_ht(hash_tables[0], hash_table_collision_depth);
     print_stats<unsigned>(bucket_counts[0]);
 
-
-
-
     vector<cl_ulong4> masks = {
       { 0xfffff00000000000, 0, 0, 0 },
       { 0x00000fffff000000, 0, 0, 0 },
@@ -356,11 +353,11 @@ int main(int argc, char **argv) {
     };
 
     printf("Running equihash\n");
-    for(int i = 0; i < 5; i++) {
+    for(int i = 0; i < 1; i++) {
       printf("round: %d\n", i);
       cl_ulong4 mask = masks[i+1];
       cl_int4 mask_shift = mask_shifts[i+1];
-      auto equihash_event2 = equihash_kern(cl::EnqueueArgs(cl::NDRange(1<<20), cl::NDRange(128)),
+      auto equihash_event2 = equihash_kern(cl::EnqueueArgs(cl::NDRange((1<<20) * 4), cl::NDRange(128)),
                                            hash_tables[1], bucket_counts[1],
                                            hash_tables[0], bucket_counts[0],
                                            masks[i], mask, mask_shift, num_buckets, 2);
@@ -373,79 +370,6 @@ int main(int argc, char **argv) {
       std::swap(bucket_counts[0], bucket_counts[1]);
     }
 
-    // cl::CommandQueue::getDefault().enqueueFillBuffer(hash_table, 0ULL, 0, hash_table_size * bitstring_size);
-    // cl::CommandQueue::getDefault().enqueueFillBuffer(bucket_count, pattern, 0, num_buckets * sizeof(unsigned int)/8);
-    // mask =       ;
-    // mask_shift = ;
-    // auto equihash_event3 = equihash_kern(cl::EnqueueArgs(cl::NDRange(1<<20), cl::NDRange(256)),
-    //                                      hash_table, bucket_count,
-    //                                      hash_table2, bucket_count2,
-    //                                      mask, mask_shift, num_buckets, 2);
-
-    // print_ht(hash_table, hash_table_collision_depth);
-    // print_stats<unsigned>(bucket_count);
-
-    // cl::CommandQueue::getDefault().enqueueFillBuffer(hash_table2, 0ULL, 0, hash_table_size * bitstring_size);
-    // cl::CommandQueue::getDefault().enqueueFillBuffer(bucket_count2, pattern, 0, num_buckets * sizeof(unsigned int)/8);
-
-    // mask =       ;
-    // mask_shift = ;
-    // auto equihash_event4 = equihash_kern(cl::EnqueueArgs(cl::NDRange(1<<20), cl::NDRange(256)),
-    //                                      hash_table2, bucket_count2,
-    //                                      hash_table, bucket_count,
-    //                                      mask, mask_shift, num_buckets, 2);
-
-    // print_ht(hash_table2, hash_table_collision_depth);
-    // print_stats<unsigned>(bucket_count2);
-
-
-
-
-    // auto equihash_event3 = equihash_kern(cl::EnqueueArgs(cl::NDRange(1<<20), cl::NDRange(256)),
-    //                                       hash_table2, bucket_count2,
-    //                                       hash_table, bucket_count,
-    //                                       mask, mask_shift, num_buckets, 3);
-    // auto equihash_event4 = equihash_kern(cl::EnqueueArgs(cl::NDRange(1<<20), cl::NDRange(256)),
-    //                                      hash_table2, bucket_count2,
-    //                                      hash_table, bucket_count,
-    //                                      mask, mask_shift, num_buckets, 4);
-    // auto equihash_event5 = equihash_kern(cl::EnqueueArgs(cl::NDRange(1<<20), cl::NDRange(256)),
-    //                                      hash_table2, bucket_count2,
-    //                                      hash_table, bucket_count,
-    //                                      mask, mask_shift, num_buckets, 5);
-    // auto equihash_event6 = equihash_kern(cl::EnqueueArgs(cl::NDRange(1<<20), cl::NDRange(256)),
-    //                                      hash_table2, bucket_count2,
-    //                                      hash_table, bucket_count,
-    //                                      mask, mask_shift, num_buckets, 6);
-
-
-
-    // DELETE ME
-    // vector<unsigned> scan_result(num_buckets);
-    // cl::copy(scan_buffer, begin(scan_result), end(scan_result));
-
-    // vector<unsigned> my_counts(num_buckets);
-    // cl::copy(bucket_count, begin(my_counts), end(my_counts));
-    // vector<unsigned> cpu_result(my_counts.size());
-    // for(int i = 0; i < my_counts.size(); i++) { cpu_result[i] = ( my_counts[i] == 2 ? i : 0); }
-    // auto last = std::remove_if(begin(cpu_result), end(cpu_result), [] (unsigned val ){ return val == 0; });
-
-    //std::sort(begin(cpu_result), last);
-    //printf("distance: %d\n", std::distance(begin(cpu_result), last));
-    // std::sort(begin(scan_result), begin(scan_result) + (1 << 11));
-    // auto scan_last = std::remove_if(begin(scan_result), begin(scan_result) + 256, [] (unsigned val ){ return val == 0; });
-
-    // std::copy(begin(cpu_result), begin(cpu_result) + 1024, std::ostream_iterator<unsigned>(std::cout, " "));
-    // printf("\n");
-    // std::copy(begin(scan_result), begin(scan_result) + 1024, std::ostream_iterator<unsigned>(std::cout, " "));
-    // printf("\n");
-
-    // for(int i = 0; i < 1024; i++) {
-    //   if(cpu_result[i] != scan_result[i]) {
-    //     printf("*");
-    //   }
-    //   printf("%4d: %5d %5d\n", i, cpu_result[i], scan_result[i]);
-    // }
 
     cl::CommandQueue::getDefault().flush();
     cl::CommandQueue::getDefault().finish();
