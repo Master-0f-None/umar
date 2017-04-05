@@ -1,12 +1,12 @@
 
 
-#define LOCAL_SIZE 256
+#define LOCAL_SIZE 128
 #define SUB_GROUP_SIZE 64
 #define NUM_SUB_GROUPS LOCAL_SIZE / SUB_GROUP_SIZE
 
 int solve(const int i) {
   float d = 1 + 8*i;
-  float k = -1 + sqrt(d);
+  float k = -1 + native_sqrt(d);
   k = k/2;
   k = ceil(k);
   return k;
@@ -36,7 +36,7 @@ int pair_count(int collisions) {
   }
 }
 
-#define BITSTRING_BUFFER_SIZE 32
+#define BITSTRING_BUFFER_SIZE 64
 #define COLLISION_DEPTH 12
 
 
@@ -51,7 +51,8 @@ int pair_count(int collisions) {
 // \param[in]  collision_size    The collion count this kernel searches for
 kernel __attribute__((reqd_work_group_size(LOCAL_SIZE, 1, 1)))
 void equihash_round(global       ulong4 * const restrict dst_ht, global       atomic_uint * const restrict dst_bucket_counts,
-                    global const ulong4 * const restrict src_ht, global const uint        * const restrict src_bucket_counts,
+                    global const ulong * const restrict src_ht, global const uint        * const restrict src_bucket_counts,
+                    ulong4 prev_hash_mask,
                     ulong4 hash_mask,
                     int4 hash_mask_shift,
                     uint num_buckets,
@@ -59,18 +60,19 @@ void equihash_round(global       ulong4 * const restrict dst_ht, global       at
   local int   wg_collision_offsets [NUM_SUB_GROUPS][SUB_GROUP_SIZE];
   local uint  wg_bucket_index[NUM_SUB_GROUPS][SUB_GROUP_SIZE];
   local ulong wg_bitstring_store[NUM_SUB_GROUPS][BITSTRING_BUFFER_SIZE*4];
-  local int   wg_pair_index[NUM_SUB_GROUPS][SUB_GROUP_SIZE];
+  //local int   wg_pair_index[NUM_SUB_GROUPS][SUB_GROUP_SIZE];
   local atomic_uint wg_batch_offsets[NUM_SUB_GROUPS];
 
   local int* collision_offsets = wg_collision_offsets[get_sub_group_id()];
   local atomic_uint* batch_offsets = &(wg_batch_offsets[get_sub_group_id()]);
   local uint* bucket_index = wg_bucket_index[get_sub_group_id()];
   local ulong* bitstring_store = wg_bitstring_store[get_sub_group_id()];
-  local int* pair_index = wg_pair_index[get_sub_group_id()];
+  //local int* pair_index = wg_pair_index[get_sub_group_id()];
 
   collision_offsets[get_sub_group_local_id()] = 0;
   bucket_index[get_sub_group_local_id()] = 0;
-  for(int i = get_sub_group_local_id(); i < BITSTRING_BUFFER_SIZE; i += get_sub_group_size()) {
+  __attribute__((opencl_unroll_hint(1)))
+    for(int i = get_sub_group_local_id(); i < BITSTRING_BUFFER_SIZE; i += get_sub_group_size()) {
     ((ulong4*)bitstring_store)[i] = -1;
   }
   atomic_init(batch_offsets, 0);
@@ -97,28 +99,62 @@ void equihash_round(global       ulong4 * const restrict dst_ht, global       at
   // return;
 
   // while the batch offset does not go past the end
-  while(sub_group_any(atomic_load(batch_offsets) < collision_offsets[get_sub_group_size() - 1])) {
-    int offset = atomic_load(batch_offsets);
-    int num_pairs = 0;
-    if(get_sub_group_local_id() != get_sub_group_size() - 1     &&
-       collision_offsets[get_sub_group_local_id()] >= offset    &&
-       collision_offsets[get_sub_group_local_id() + 1] < (offset + BITSTRING_BUFFER_SIZE)) {
-      //if(get_group_id(0) == 0 && get_sub_group_id() == 0) printf("%d %d", get_sub_group_local_id(), collision_offsets[get_sub_group_local_id()]);
-      atomic_fetch_max_explicit(batch_offsets, collision_offsets[get_sub_group_local_id()+1], memory_order_relaxed, memory_scope_sub_group);
+  __attribute__((opencl_unroll_hint(1)))
+  while(sub_group_any(atomic_load_explicit(batch_offsets, memory_order_relaxed, memory_scope_sub_group) < collision_offsets[SUB_GROUP_SIZE - 1])) {
+    //int num_pairs = 0;
+      int offset = atomic_load_explicit(batch_offsets, memory_order_relaxed, memory_scope_sub_group);
+      bool cond = get_sub_group_local_id() != SUB_GROUP_SIZE - 1     &&
+        collision_offsets[get_sub_group_local_id()] >= offset    &&
+        collision_offsets[get_sub_group_local_id() + 1] < (offset + BITSTRING_BUFFER_SIZE);
+      if(cond) {
+        //if(get_group_id(0) == 0 && get_sub_group_id() == 0) printf("%d %d", get_sub_group_local_id(), collision_offsets[get_sub_group_local_id()]);
+        atomic_fetch_max_explicit(batch_offsets, collision_offsets[get_sub_group_local_id()+1], memory_order_relaxed, memory_scope_sub_group);
 
-      char collision_count = collision_offsets[get_sub_group_local_id()+1] - collision_offsets[get_sub_group_local_id()];
-      //if(get_global_id(0)<64) printf("%d %d %d", collision_count, collision_offsets[get_sub_group_local_id()], bucket_index[get_sub_group_id()][get_sub_group_local_id()]);
-      for(int i = 0; i < collision_count; i++) {
-        ((ulong4*)bitstring_store)[collision_offsets[get_sub_group_local_id()] + i - offset] = (ulong4)(bucket_index[get_sub_group_local_id()] * 4 * COLLISION_DEPTH + i * 4);
+        char collision_count = collision_offsets[get_sub_group_local_id()+1] - collision_offsets[get_sub_group_local_id()];
+        //if(get_global_id(0)<64) printf("%d %d %d", collision_count, collision_offsets[get_sub_group_local_id()], bucket_index[get_sub_group_id()][get_sub_group_local_id()]);
+        __attribute__((opencl_unroll_hint(1)))
+        for(int i = 0; i < collision_count; i++) {
+          ((ulong4*)bitstring_store)[collision_offsets[get_sub_group_local_id()] + i - offset] = (ulong4)(bucket_index[get_sub_group_local_id()] * 4 * COLLISION_DEPTH + i * 4);
+        }
+        //num_pairs = pair_count(collision_count);
       }
-      num_pairs = pair_count(collision_count);
-    }
+      sub_group_barrier(CLK_LOCAL_MEM_FENCE);
+
+      int end_offset = (atomic_load_explicit(batch_offsets, memory_order_relaxed, memory_scope_sub_group) - offset) * 4;
+      // retrieve the bitstrings from global memory
+      __attribute__((opencl_unroll_hint(1)))
+      for(int i = get_sub_group_local_id(); i < end_offset; i+= SUB_GROUP_SIZE) {
+        bitstring_store[i] = src_ht[bitstring_store[i] + (get_sub_group_local_id() & 0x3)];
+      }
+      //pair_index[get_sub_group_local_id()] = sub_group_scan_inclusive_add(num_pairs);
     sub_group_barrier(CLK_LOCAL_MEM_FENCE);
 
-    int end_offset = (atomic_load(batch_offsets) - offset) * 4;
-    // retrieve the bitstrings from global memory
-    for(int i = get_sub_group_local_id(); i < end_offset; i+= get_sub_group_size()) {
-      bitstring_store[i] = ((__global ulong *)src_ht)[bitstring_store[i] + (get_sub_group_local_id() % 4)];
+    for(int i = get_sub_group_local_id(); i < end_offset>>2; i+= get_sub_group_size()) {
+      __attribute__((opencl_unroll_hint(1)))
+      for(int j = 1; j < 14; j++) {
+        long4 tmp = (((ulong4*)bitstring_store)[i] & prev_hash_mask) == (((ulong4*)bitstring_store)[i+j] & prev_hash_mask);
+        bool cond = tmp.x == -1 && tmp.y == -1 && tmp.z == -1 && tmp.w == -1;
+        if(cond) {
+          ulong4 result;
+          {
+            result = ((ulong4*)bitstring_store)[i] ^ ((ulong4*)bitstring_store)[i+j];
+          }
+
+          if(result.x != 0 || result.y != 0 || result.z != 0 || result.w != 0) {
+            ulong4 bucket4 = (hash_mask & result) >> hash_mask_shift;
+            bucket4 ^= (hash_mask & result) << -hash_mask_shift;
+            int bucket = bucket4.x ^ bucket4.y ^ bucket4.z ^ bucket4.w;
+
+            int bucket_comp_index = (bucket >> 3);
+            int bucket_comp_shift = (bucket & 0x7) * 4;
+
+            int bin_index = atomic_fetch_add_explicit(dst_bucket_counts+bucket_comp_index, 1u << bucket_comp_shift, memory_order_relaxed, memory_scope_device);
+            dst_ht[bucket * COLLISION_DEPTH + ((bin_index >> bucket_comp_shift) & 0xf)] = result;
+          }
+        } else {
+          break;
+        }
+      }
     }
     // if(get_group_id(0) == 0 && get_local_id(0) == 0) {
     //   printf("end_offset: %d", end_offset/4);
@@ -128,69 +164,71 @@ void equihash_round(global       ulong4 * const restrict dst_ht, global       at
     // }
     // continue;
 
-    pair_index[get_sub_group_local_id()] = sub_group_scan_inclusive_add(num_pairs);
-    sub_group_barrier(CLK_LOCAL_MEM_FENCE);
+    // __attribute__((opencl_unroll_hint(1)))
+    // for(int sgid = get_sub_group_local_id(); sub_group_any(sgid < pair_index[SUB_GROUP_SIZE - 1]); sgid += SUB_GROUP_SIZE) {
+    //   int my_pair_index = -1;
+    //   int dist = 0;
+    //   int diff = 0;
+    //   //int iter = 0;
+    //   __attribute__((opencl_unroll_hint(1)))
+    //   for(int i = 0; i < SUB_GROUP_SIZE; i++) {
+    //     if(pair_index[i] > sgid) {
+    //       my_pair_index = i;
+    //       dist = pair_index[i] - sgid;
+    //       break;
+    //     }
+    //     if(pair_index[i] != 0) {
+    //       diff++;
+    //       if(i > 0 && pair_index[i] == pair_index[i-1]) break;
+    //     }
+    //     //iter++;
+    //   }
+    //   //if(iter > 10) printf("%d: %d", get_global_id(0), iter);
 
-    for(int sgid = get_sub_group_local_id(); sub_group_any(sgid < pair_index[get_sub_group_size() - 1]); sgid += get_sub_group_size()) {
-      int my_pair_index = -1;
-      int dist = 0;
-      int diff = 0;
-      for(int i = 0; i < get_sub_group_size(); i++) {
-        if(pair_index[i] > sgid) {
-          my_pair_index = i;
-          dist = pair_index[i] - sgid;
-          break;
-        }
-        if(pair_index[i] != 0) {
-          diff++;
-          if(i > 0 && pair_index[i] == pair_index[i-1]) break;
-        }
-      }
+    //   if(my_pair_index != -1) {
+    //     ulong4 result = 0;
+    //     {
+    //       int idx = collision_offsets[my_pair_index] - collision_offsets[my_pair_index-diff];
+    //       int2 lbs_index = get_pair(dist) + idx - 1;
+    //       result = ((ulong4*)bitstring_store)[lbs_index.x] ^ ((ulong4*)bitstring_store)[lbs_index.y];
+    //     }
 
-      if(my_pair_index != -1) {
-        ulong4 result = 0;
-        {
-          int idx = collision_offsets[my_pair_index] - collision_offsets[my_pair_index-diff];
-          int2 lbs_index = get_pair(dist) + idx - 1;
-          result = ((ulong4*)bitstring_store)[lbs_index.x] ^ ((ulong4*)bitstring_store)[lbs_index.y];
-        }
+    //     if(result.s0 || result.s1 || result.s2 || result.s3) {
+    //       ulong4 bucket4 = (hash_mask & result) >> hash_mask_shift;
+    //       bucket4 ^= (hash_mask & result) << -hash_mask_shift;
+    //       int bucket = bucket4.x ^ bucket4.y ^ bucket4.z ^ bucket4.w;
+    //       //if(get_global_id(0) == 0) printf("[%016v4lx]  [%016v4lx] | [%016lx]", result, bucket4, bucket);
 
-        if(result.s0 || result.s1 || result.s2 || result.s3) {
-          ulong4 bucket4 = (hash_mask & result) >> hash_mask_shift;
-          bucket4 ^= (hash_mask & result) << -hash_mask_shift;
-          int bucket = bucket4.x ^ bucket4.y ^ bucket4.z ^ bucket4.w;
-          //if(get_global_id(0) == 0) printf("[%016v4lx]  [%016v4lx] | [%016lx]", result, bucket4, bucket);
+    //       int bucket_comp_index = (bucket >> 3);
+    //       int bucket_comp_shift = (bucket & 0x7) * 4;
 
-          int bucket_comp_index = (bucket >> 3);
-          int bucket_comp_shift = (bucket & 0x7) * 4;
-
-          int bin_index = atomic_fetch_add_explicit(dst_bucket_counts+bucket_comp_index, 1u << bucket_comp_shift, memory_order_relaxed, memory_scope_device);
-          dst_ht[bucket * COLLISION_DEPTH + ((bin_index >> bucket_comp_shift) & 0xf)] = result;
-        }
-      }
-    }
+    //       int bin_index = atomic_fetch_add_explicit(dst_bucket_counts+bucket_comp_index, 1u << bucket_comp_shift, memory_order_relaxed, memory_scope_device);
+    //       dst_ht[bucket * COLLISION_DEPTH + ((bin_index >> bucket_comp_shift) & 0xf)] = result;
+    //     }
+    //   }
+    // }
   }
 
   return;
 }
 
 //   //////////////////////////////////////////////////////////////////////////////////////////////////////
-// 
-// 
+//
+//
 //   // calculate the starting index
 //   lidx = sub_group_scan_exclusive_add(wg_collision_offsets[get_sub_group_id()][get_sub_group_local_id()]);
 //   //if(get_global_id(0) < 16) printf("%d", lidx);
-// 
+//
 //   // propagate indices
 //   if(wg_collision_offsets[get_sub_group_id()][get_sub_group_local_id()] > 0 && (lidx + wg_collision_offsets[get_sub_group_id()][get_sub_group_local_id()]) <= BITSTRING_BUFFER_SIZE) {
 //     for(int i = 0; i < wg_collision_offsets[get_sub_group_id()][get_sub_group_local_id()]; i++) {
 //       ((ulong4*)bitstring_store[get_sub_group_id()])[lidx+i] = (ulong4)(bucket_index[get_sub_group_id()][get_sub_group_local_id()] * 4 * COLLISION_DEPTH + i * 4);
 //     }
 //   }
-// 
+//
 //   bucket_index[get_sub_group_id()][get_sub_group_local_id()] = lidx;
 //   sub_group_barrier(CLK_LOCAL_MEM_FENCE);
-// 
+//
 //   // retrieve the bitstrings from global memory
 //   for(int i = get_sub_group_local_id(); i < BITSTRING_BUFFER_SIZE*4; i+= get_sub_group_size()) {
 //     bitstring_store[get_sub_group_id()][i] = ((__global ulong *)src_ht)[bitstring_store[get_sub_group_id()][i] + bsid];

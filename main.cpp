@@ -278,7 +278,7 @@ int main(int argc, char **argv) {
     blake.build("-cl-std=CL2.0");
     equihash.build("-cl-std=CL2.1 -O2 -cl-denorms-are-zero -cl-single-precision-constant -cl-strict-aliasing -cl-mad-enable -cl-no-signed-zeros -cl-unsafe-math-optimizations -cl-finite-math-only -cl-fast-relaxed-math");
     auto blake_kern = cl::KernelFunctor<cl::Buffer, cl::Buffer, cl::Buffer, int>(blake, "blake");
-    auto equihash_kern = cl::KernelFunctor<cl::Buffer, cl::Buffer, cl::Buffer, cl::Buffer, cl_ulong4, cl_int4, unsigned, unsigned>(equihash, "equihash_round");
+    auto equihash_kern = cl::KernelFunctor<cl::Buffer, cl::Buffer, cl::Buffer, cl::Buffer, cl_ulong4, cl_ulong4, cl_int4, unsigned, unsigned>(equihash, "equihash_round");
 
     blake2b_state_t blake_state;
     zcash_blake2b_init(&blake_state, ZCASH_HASH_LEN, n, k);
@@ -338,6 +338,7 @@ int main(int argc, char **argv) {
 
 
     vector<cl_ulong4> masks = {
+      { 0xfffff00000000000, 0, 0, 0 },
       { 0x00000fffff000000, 0, 0, 0 },
       { 0x0000000000fffff0, 0, 0, 0 },
       { 0x000000000000000f, 0xffff000000000000, 0, 0 },
@@ -346,6 +347,7 @@ int main(int argc, char **argv) {
     };
 
     vector<cl_int4> mask_shifts = {
+      { 0, 0, 0, 0 },
       { 24, 0, 0, 0 },
       { 4, 0, 0, 0 },
       { -16, 64-16, 0, 0 },
@@ -356,12 +358,12 @@ int main(int argc, char **argv) {
     printf("Running equihash\n");
     for(int i = 0; i < 5; i++) {
       printf("round: %d\n", i);
-      cl_ulong4 mask = masks[i];
-      cl_int4 mask_shift = mask_shifts[i];
-      auto equihash_event2 = equihash_kern(cl::EnqueueArgs(cl::NDRange(1<<20), cl::NDRange(256)),
+      cl_ulong4 mask = masks[i+1];
+      cl_int4 mask_shift = mask_shifts[i+1];
+      auto equihash_event2 = equihash_kern(cl::EnqueueArgs(cl::NDRange(1<<20), cl::NDRange(128)),
                                            hash_tables[1], bucket_counts[1],
                                            hash_tables[0], bucket_counts[0],
-                                           mask, mask_shift, num_buckets, 2);
+                                           masks[i], mask, mask_shift, num_buckets, 2);
 
       cl::CommandQueue::getDefault().enqueueFillBuffer(hash_tables[0], 0ULL, 0, hash_table_size * bitstring_size);
       cl::CommandQueue::getDefault().enqueueFillBuffer(bucket_counts[0], pattern, 0, num_buckets * sizeof(unsigned int)/8);
