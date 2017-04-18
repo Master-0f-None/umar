@@ -1,0 +1,10 @@
+
+
+
+#+BEGIN_SRC shell
+mkdir build
+cd build
+ccmake ..
+make
+./af_cash
+#+END_SRC
