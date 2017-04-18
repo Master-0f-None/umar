@@ -1,5 +1,13 @@
+#+TITLE: AF_CASH Build Instrucitons
+#+AUTHOR: Umar Arshad <umar456@gmail.com>
 
+* Dependencies
 
+- CMake
+- Boost program_options
+- Blake2b
+
+* Run these commands
 
 #+BEGIN_SRC shell
 mkdir build
